@@ -19,10 +19,10 @@ package oci
 import (
 	"encoding/json"
 	"fmt"
+	compatible2 "github.com/NVIDIA/nvidia-container-toolkit/compatible"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"io"
 	"os"
-
-	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type fileSpec struct {
@@ -31,6 +31,7 @@ type fileSpec struct {
 }
 
 var _ Spec = (*fileSpec)(nil)
+var compatible compatible2.Compatible
 
 // NewFileSpec creates an object that encapsulates a file-backed OCI spec.
 // This can be used to read from the file, modify the spec, and write to the
@@ -52,7 +53,22 @@ func (s *fileSpec) Load() (*specs.Spec, error) {
 	}
 	defer specFile.Close()
 
-	spec, err := LoadFrom(specFile)
+	// 兼容低版本 runc oci 标准, 以实现兼容低版本 docker
+	var reader io.Reader
+	compatible, err = compatible2.NewCompatible(specFile)
+	if err == nil {
+		reader, err = compatible.Decode()
+		if err != nil {
+			return nil, err
+		}
+	} else if err == compatible2.ErrUnknownOCIVersion {
+		specFile.Seek(0, 0)
+		reader = specFile
+	} else {
+		return nil, err
+	}
+	// 为兼容低版本所添加的代码到此结束
+	spec, err := LoadFrom(reader)
 	if err != nil {
 		return nil, fmt.Errorf("error loading OCI specification from file: %v", err)
 	}
@@ -70,7 +86,6 @@ func LoadFrom(reader io.Reader) (*specs.Spec, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error reading OCI specification: %v", err)
 	}
-
 	return &spec, nil
 }
 
@@ -100,12 +115,22 @@ func flushTo(spec *specs.Spec, writer io.Writer) error {
 	if spec == nil {
 		return nil
 	}
+
 	encoder := json.NewEncoder(writer)
 
-	err := encoder.Encode(spec)
-	if err != nil {
-		return fmt.Errorf("error writing OCI specification: %v", err)
+	if compatible != nil {
+		oldSpec, err := compatible.Encode(spec)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(oldSpec); err != nil {
+			return fmt.Errorf("error writing OCI specification: %v", err)
+		}
+	} else {
+		err := encoder.Encode(spec)
+		if err != nil {
+			return fmt.Errorf("error writing OCI specification: %v", err)
+		}
 	}
-
 	return nil
 }

@@ -9,6 +9,9 @@ github.com/NVIDIA/go-nvml/pkg/nvml
 # github.com/blang/semver v3.5.1+incompatible
 ## explicit
 github.com/blang/semver
+# github.com/buger/jsonparser v1.1.1
+## explicit; go 1.13
+github.com/buger/jsonparser
 # github.com/container-orchestrated-devices/container-device-interface v0.5.2
 ## explicit; go 1.17
 github.com/container-orchestrated-devices/container-device-interface/pkg/cdi

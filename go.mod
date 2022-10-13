@@ -5,6 +5,7 @@ go 1.17
 require (
 	github.com/BurntSushi/toml v1.0.0
 	github.com/NVIDIA/go-nvml v0.11.6-0.0.20220823120812-7e2082095e82
+	github.com/buger/jsonparser v1.1.1
 	github.com/container-orchestrated-devices/container-device-interface v0.5.2
 	github.com/opencontainers/runc v1.1.4
 	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab

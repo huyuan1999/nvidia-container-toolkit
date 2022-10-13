@@ -2,12 +2,11 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"strings"
-
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/info"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"os"
+	"strings"
 )
 
 // version must be set by go build's -X main.version= option in the Makefile.
