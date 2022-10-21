@@ -12,12 +12,42 @@ import (
 	oldspecs "github.com/NVIDIA/nvidia-container-toolkit/compatible/runcv100rc2/specs-go"
 	newspecs "github.com/opencontainers/runtime-spec/specs-go"
 	"io"
+	"reflect"
+	"strings"
 )
 
 type Compatible struct {
-	spec []byte
-	os   string
-	arch string
+	spec          []byte
+	os            string
+	arch          string
+	eraseSyscalls bool
+	eraseCaps     bool
+}
+
+func validateField(obj interface{}, field string) bool {
+	if obj == nil {
+		return false
+	}
+
+	v := reflect.ValueOf(obj)
+
+	for _, name := range strings.Split(field, ".") {
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem().FieldByName(name)
+		} else {
+			v = v.FieldByName(name)
+		}
+
+		switch v.Kind() {
+		case reflect.Ptr, reflect.Map, reflect.Slice:
+			if v.IsNil() {
+				return false
+			}
+		default:
+			return true
+		}
+	}
+	return true
 }
 
 func NewCompatible(spec []byte) *Compatible {
@@ -100,6 +130,7 @@ func (c *Compatible) eraseEncodeCapabilitiesDiff(newCapabilities *newspecs.Linux
 func (c *Compatible) Decode() (reader io.Reader, err error) {
 	var oldSpec oldspecs.Spec
 	var newSpec newspecs.Spec
+	var intermediate newspecs.Spec
 
 	if err = json.Unmarshal(c.spec, &oldSpec); err != nil {
 		return nil, fmt.Errorf("error compatible runc v1.0.0-rc2 decode spec file: %v", err)
@@ -108,19 +139,23 @@ func (c *Compatible) Decode() (reader io.Reader, err error) {
 	c.os = oldSpec.Platform.OS
 	c.arch = oldSpec.Platform.Arch
 
-	intermediate := newspecs.Spec{
-		Linux: &newspecs.Linux{
+	if validateField(oldSpec, "Linux.Seccomp.Syscalls") {
+		intermediate.Linux = &newspecs.Linux{
 			Seccomp: &newspecs.LinuxSeccomp{
 				Syscalls: c.eraseDecodeSyscallsDiff(oldSpec.Linux.Seccomp.Syscalls),
 			},
-		},
-		Process: &newspecs.Process{
-			Capabilities: c.eraseDecodeCapabilitiesDiff(oldSpec.Process.Capabilities),
-		},
+		}
+		oldSpec.Linux.Seccomp.Syscalls = nil
+		c.eraseSyscalls = true
 	}
 
-	oldSpec.Linux.Seccomp.Syscalls = nil
-	oldSpec.Process.Capabilities = nil
+	if validateField(oldSpec, "Process.Capabilities") {
+		intermediate.Process = &newspecs.Process{
+			Capabilities: c.eraseDecodeCapabilitiesDiff(oldSpec.Process.Capabilities),
+		}
+		oldSpec.Process.Capabilities = nil
+		c.eraseCaps = true
+	}
 
 	erase, err := json.Marshal(&oldSpec)
 	if err != nil {
@@ -131,8 +166,13 @@ func (c *Compatible) Decode() (reader io.Reader, err error) {
 		return nil, fmt.Errorf("error unmarshal old spec to new spec: %v", err)
 	}
 
-	newSpec.Linux.Seccomp.Syscalls = intermediate.Linux.Seccomp.Syscalls
-	newSpec.Process.Capabilities = intermediate.Process.Capabilities
+	if c.eraseSyscalls {
+		newSpec.Linux.Seccomp.Syscalls = intermediate.Linux.Seccomp.Syscalls
+	}
+
+	if c.eraseCaps {
+		newSpec.Process.Capabilities = intermediate.Process.Capabilities
+	}
 
 	spec, err := json.Marshal(&newSpec)
 	if err != nil {
@@ -143,19 +183,23 @@ func (c *Compatible) Decode() (reader io.Reader, err error) {
 
 func (c *Compatible) Encode(newSpec *newspecs.Spec) (*oldspecs.Spec, error) {
 	var oldSpec oldspecs.Spec
-	intermediate := oldspecs.Spec{
-		Linux: &oldspecs.Linux{
+	var intermediate oldspecs.Spec
+
+	if c.eraseSyscalls {
+		intermediate.Linux = &oldspecs.Linux{
 			Seccomp: &oldspecs.Seccomp{
 				Syscalls: c.eraseEncodeSyscallsDiff(newSpec.Linux.Seccomp.Syscalls),
 			},
-		},
-		Process: oldspecs.Process{
-			Capabilities: c.eraseEncodeCapabilitiesDiff(newSpec.Process.Capabilities),
-		},
+		}
+		newSpec.Linux.Seccomp.Syscalls = nil
 	}
 
-	newSpec.Linux.Seccomp.Syscalls = nil
-	newSpec.Process.Capabilities = nil
+	if c.eraseCaps {
+		intermediate.Process = oldspecs.Process{
+			Capabilities: c.eraseEncodeCapabilitiesDiff(newSpec.Process.Capabilities),
+		}
+		newSpec.Process.Capabilities = nil
+	}
 
 	erase, err := json.Marshal(newSpec)
 	if err != nil {
@@ -166,8 +210,14 @@ func (c *Compatible) Encode(newSpec *newspecs.Spec) (*oldspecs.Spec, error) {
 		return nil, fmt.Errorf("error unmarshal new spec to old spec: %v", err)
 	}
 
-	oldSpec.Linux.Seccomp.Syscalls = intermediate.Linux.Seccomp.Syscalls
-	oldSpec.Process.Capabilities = intermediate.Process.Capabilities
+	if c.eraseSyscalls {
+		oldSpec.Linux.Seccomp.Syscalls = intermediate.Linux.Seccomp.Syscalls
+	}
+
+	if c.eraseCaps {
+		oldSpec.Process.Capabilities = intermediate.Process.Capabilities
+	}
+
 	oldSpec.Platform.OS = c.os
 	oldSpec.Platform.Arch = c.arch
 	return &oldSpec, nil
